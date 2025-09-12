@@ -143,9 +143,7 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# -----------------------
-# CSS für volle Breite, kompakte Tabellen, Season schmal
-# -----------------------
+# CSS für Streamlit Output
 st.markdown(
     """
     <style>
@@ -179,31 +177,48 @@ st.markdown(
         font-size: 14px !important;
     }
 
-    /* Match ID Matrix */
-    table.match-matrix,table.score-matrix {
+    /* Match ID Matrix & Score Matrix */
+    table.match-matrix, table.score-matrix {
         border-collapse: collapse;
         width: 100%;
         table-layout: fixed;     /* Spalten gleichmäßig */
     }
-    table.match-matrix th, table.match-matrix td,table.score-matrix th, table.score-matrix td {
+
+    table.match-matrix th, table.match-matrix td,
+    table.score-matrix th, table.score-matrix td {
         border: 1px solid #ddd;
         padding: 4px;
         text-align: center;      /* Match IDs mittig */
         white-space: nowrap;     /* IDs nicht umbrechen */
         width: 80px;             /* feste Spaltenbreite */
     }
-    table.match-matrix th, table.score-matrix th {
-        background-color: #000000;
-        font-weight: bold;
-    }
+
+    table.match-matrix th, table.score-matrix th,
     table.match-matrix tbody th, table.score-matrix tbody th {
-        text-align: left;        /* Spielername linksbündig */
         font-weight: bold;
         position: sticky;
         left: 0;
-        background-color: #000000;
         z-index: 1;
     }
+
+    /* Farben nach Systemmodus */
+    @media (prefers-color-scheme: dark) {
+        table.match-matrix th, table.score-matrix th,
+        table.match-matrix tbody th, table.score-matrix tbody th {
+            background-color: #000000;
+            color: #ffffff;
+        }
+    }
+
+    @media (prefers-color-scheme: light) {
+        table.match-matrix th, table.score-matrix th,
+        table.match-matrix tbody th, table.score-matrix tbody th {
+            background-color: #f0f0f0;
+            color: #000000;
+        }
+    }
+
+    /* Header oben fixieren */
     table.match-matrix thead th, table.score-matrix thead th {
         position: sticky;
         top: 0;
