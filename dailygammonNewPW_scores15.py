@@ -144,7 +144,6 @@ st.set_page_config(
 )
 
 # CSS für Streamlit Output
-# CSS für Streamlit Output
 st.markdown(
     """
     <style>
@@ -154,7 +153,7 @@ st.markdown(
         margin-top: 0rem !important;
     }
     .main .block-container {
-        max-width: 100% !important;
+        max-width: 100% !important;   /* volle Breite ausnutzen */
         padding-left: 1rem !important; 
         padding-right: 1rem !important;
         padding-top: 0rem !important;
@@ -182,25 +181,20 @@ st.markdown(
     table.match-matrix, table.score-matrix {
         border-collapse: collapse;
         width: 100%;
-        table-layout: fixed;
+        table-layout: fixed;     /* Spalten gleichmäßig */
     }
 
-    /* Standard-Zellen */
     table.match-matrix th, table.match-matrix td,
     table.score-matrix th, table.score-matrix td {
         border: 1px solid #ddd;
         padding: 4px;
-        white-space: nowrap;
-        width: 80px;
-        text-align: center;  /* Standard: mittig */
+        text-align: center;      /* Match IDs mittig */
+        white-space: nowrap;     /* IDs nicht umbrechen */
+        width: 80px;             /* feste Spaltenbreite */
     }
 
-    /* Erste Spalte (Spielernamen) linksbündig + sticky */
-    table.match-matrix th:first-child,
-    table.match-matrix tbody th:first-child,
-    table.score-matrix th:first-child,
-    table.score-matrix tbody th:first-child {
-        text-align: left;
+    table.match-matrix th, table.score-matrix th,
+    table.match-matrix tbody th, table.score-matrix tbody th {
         font-weight: bold;
         position: sticky;
         left: 0;
@@ -209,20 +203,16 @@ st.markdown(
 
     /* Farben nach Systemmodus */
     @media (prefers-color-scheme: dark) {
-        table.match-matrix th:first-child,
-        table.match-matrix tbody th:first-child,
-        table.score-matrix th:first-child,
-        table.score-matrix tbody th:first-child {
+        table.match-matrix th, table.score-matrix th,
+        table.match-matrix tbody th, table.score-matrix tbody th {
             background-color: #000000;
             color: #ffffff;
         }
     }
 
     @media (prefers-color-scheme: light) {
-        table.match-matrix th:first-child,
-        table.match-matrix tbody th:first-child,
-        table.score-matrix th:first-child,
-        table.score-matrix tbody th:first-child {
+        table.match-matrix th, table.score-matrix th,
+        table.match-matrix tbody th, table.score-matrix tbody th {
             background-color: #f0f0f0;
             color: #000000;
         }
@@ -262,8 +252,8 @@ with col1:
     season_input = st.selectbox("Season", ["34"], index=0)
 
 with col2:
-    sessions = ["1a", "2a", "2b", "3a", "3b", "3c", "3d",
-                "4a", "4b", "4c", "4d", "5a", "5b", "5c"]
+    sessions = ["1a", "2a", "2b", "2c", "3a", "3b", "3c", "3d",
+                "4a", "4b", "4c", "4d", "5a", "5b", "5c", "5d"]
     selection = st.radio("League + Group", sessions, index=1, horizontal=True)
 
 # -----------------------
