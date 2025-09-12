@@ -137,27 +137,32 @@ BASE_URL = "http://dailygammon.com/bg/game/{}/0/list"
 # -----------------------
 # Streamlit Config & Auswahl
 # -----------------------
-
 st.set_page_config(
-    page_title="DailyGammon Dashboard",
-    layout="wide",       # <<< Vollbildmodus aktivieren
+    page_title="Backgammon Championship",
+    layout="wide",
     initial_sidebar_state="auto"
 )
 
+# -----------------------
+# CSS für volle Breite, kompakte Tabellen, Season schmal
+# -----------------------
 st.markdown(
     """
     <style>
-    /* Alles nach ganz oben drücken */
+    /* Alles nach oben drücken */
     section.main > div {
         padding-top: 0rem !important;
         margin-top: 0rem !important;
     }
     .main .block-container {
+        max-width: 100% !important;   /* volle Breite ausnutzen */
+        padding-left: 1rem !important; 
+        padding-right: 1rem !important;
         padding-top: 0rem !important;
         margin-top: 0rem !important;
     }
 
-    /* Season Selectbox schmaler machen */
+    /* Season Selectbox schmaler */
     div[data-baseweb="select"] {
         max-width: 8em !important;
     }
@@ -165,6 +170,44 @@ st.markdown(
     /* Tabellen auf volle Breite */
     table {
         width: 100% !important;
+    }
+
+    /* Pandas Tabellen kompakt */
+    table.dataframe th, table.dataframe td {
+        padding: 4px 5px !important;
+        line-height: 1.4em !important;
+        font-size: 14px !important;
+    }
+
+    /* Match ID Matrix */
+    table.match-matrix,table.score-matrix {
+        border-collapse: collapse;
+        width: 100%;
+        table-layout: fixed;     /* Spalten gleichmäßig */
+    }
+    table.match-matrix th, table.match-matrix td,table.score-matrix th, table.score-matrix td {
+        border: 1px solid #ddd;
+        padding: 4px;
+        text-align: center;      /* Match IDs mittig */
+        white-space: nowrap;     /* IDs nicht umbrechen */
+        width: 80px;             /* feste Spaltenbreite */
+    }
+    table.match-matrix th, table.score-matrix th {
+        background-color: #000000;
+        font-weight: bold;
+    }
+    table.match-matrix tbody th, table.score-matrix tbody th {
+        text-align: left;        /* Spielername linksbündig */
+        font-weight: bold;
+        position: sticky;
+        left: 0;
+        background-color: #000000;
+        z-index: 1;
+    }
+    table.match-matrix thead th, table.score-matrix thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
     }
     </style>
     """,
@@ -176,7 +219,7 @@ st.markdown(
 # -----------------------
 st.markdown(
     """
-    <h1 style='text-align: center; color: #1F3A93; font-size: 2em;'>
+    <h1 style='text-align: center; color: #1F3A93; font-size: 3em;'>
         🎲 Backgammon Championship
     </h1>
     """,
@@ -223,8 +266,6 @@ season = f"{saison_nummer}th-season-{liga}"
 df_players = None
 df_matches = None
 df_links = None
-
-
 
 print("="*50)
 print(f"▶ Script started – collecting links and data for {season}")
@@ -317,6 +358,10 @@ else:
             cell.hyperlink = f"http://www.dailygammon.com/bg/user/{player_id}"
             cell.style = "Hyperlink"  # Blau + unterstrichen
 
+    # leeres df_links vorbereiten, damit es später immer existiert
+    df_links = pd.DataFrame()
+# --- Tab 3: Match ID Matrix ---
+df_links_clickable = df_links.copy()
 # -----------------------------------------------------
 # --- Data structures ---
 # -----------------------------------------------------
@@ -542,18 +587,7 @@ if df_players is not None and df_matches is not None and df_links is not None:
     placeholder_tab2 = st.session_state.dg_placeholders["tab2"]
     placeholder_tab3 = st.session_state.dg_placeholders["tab3"]
 
-    # Excel Last Modified Timestamp
-    placeholder_timestamp = st.empty()
-    last_modified = os.path.getmtime(output_file)
-    tz = pytz.timezone("Europe/Berlin")
-    last_modified_dt = datetime.fromtimestamp(last_modified, tz)
-    formatted_time = last_modified_dt.strftime("%b %d, %Y %H:%M %Z")
-
-    placeholder_timestamp.markdown(
-        f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>",
-        unsafe_allow_html=True
-    )
-
+    
     # --- Tab 1: League Table ---
     players = df_matches.index.tolist()
     intermediate_scores = {}
@@ -641,7 +675,16 @@ if df_players is not None and df_matches is not None and df_links is not None:
 
     # Tabelle in Platzhalter schreiben
     with tab1:
-        placeholder_tab1.markdown(df_stats.to_html(escape=False, index=False), unsafe_allow_html=True)
+        df_stats_html = df_stats.to_html(escape=False, index=False)
+
+        last_modified = os.path.getmtime(output_file)
+        tz = pytz.timezone("Europe/Berlin")
+        last_modified_dt = datetime.fromtimestamp(last_modified, tz)
+        formatted_time = last_modified_dt.strftime("%b %d, %Y %H:%M %Z")
+
+        html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
+
+        placeholder_tab1.markdown(html, unsafe_allow_html=True)
 
     # --- Tab 2: Score Matrix ---
     matrix_scores = pd.DataFrame("", index=players, columns=players)
@@ -662,18 +705,82 @@ if df_players is not None and df_matches is not None and df_links is not None:
                     )
             except IndexError:
                 continue
-    placeholder_tab2.markdown(matrix_scores.to_html(escape=False), unsafe_allow_html=True)
+
+    # Minimaler Eingriff für linke Spalte als <th> und eigene CSS-Klasse
+    html_table = matrix_scores.to_html(escape=False)
+    html_table = html_table.replace('<tr><td>', '<tr><th>') \
+                        .replace('</td></tr>', '</th></tr>') \
+                        .replace('<table border="1" class="dataframe">', '<table class="score-matrix">')
+
+    placeholder_tab2.markdown(html_table, unsafe_allow_html=True)
+
 
     # --- Tab 3: Match ID Matrix ---
     df_links_clickable = df_links.copy()
+
+    # Hyperlinks für Match IDs einfügen
     for col in df_links_clickable.columns:
         df_links_clickable[col] = df_links_clickable[col].apply(
-            lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' if pd.notna(mid) else ""
+            lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' 
+            if pd.notna(mid) else ""
         )
-    placeholder_tab3.markdown(df_links_clickable.to_html(escape=False), unsafe_allow_html=True)
 
+    # DataFrame als HTML-Tabelle mit eigener Klasse rendern
+    html_table = df_links_clickable.to_html(escape=False)
+    html_table = html_table.replace(
+        '<table border="1" class="dataframe">', 
+        '<table class="match-matrix">'
+    )
+    # Ausgabe in Streamlit
+    placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
 else:
     st.info("1st run: Initializing tables")
+    # Platzhalter erzeugen, damit spätere Updates funktionieren
+    tab1, tab2, tab3 = st.tabs(["League Table", "Score Matrix", "Match ID Matrix"])
+    
+    st.session_state.dg_placeholders = {
+        "tab1": tab1.empty(),
+        "tab2": tab2.empty(),
+        "tab3": tab3.empty(),
+    }
+    placeholder_tab1 = st.session_state.dg_placeholders["tab1"]
+    placeholder_tab2 = st.session_state.dg_placeholders["tab2"]
+    placeholder_tab3 = st.session_state.dg_placeholders["tab3"]
+
+
+# Hyperlinks für Match IDs einfügen
+#for col in df_links_clickable.columns:
+#    df_links_clickable[col] = df_links_clickable[col].apply(
+#        lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' 
+#        if pd.notna(mid) else ""
+#    )
+
+# Hyperlinks für Match IDs einfügen (ohne Diagonale: Player vs. sich selbst)
+for row_idx, row_name in enumerate(df_links_clickable.index):
+    for col_idx, col_name in enumerate(df_links_clickable.columns):
+        if row_name == col_name:  
+            # Diagonale -> leer
+            df_links_clickable.iat[row_idx, col_idx] = ""
+        else:
+            mid = df_links_clickable.iat[row_idx, col_idx]
+            if pd.notna(mid) and str(mid).strip().isdigit():
+                mid_int = int(mid)
+                df_links_clickable.iat[row_idx, col_idx] = (
+                    f'<a href="http://dailygammon.com/bg/matches/{mid_int}#end" target="_blank">{mid_int}</a>'
+                )
+            else:
+                df_links_clickable.iat[row_idx, col_idx] = ""
+
+# DataFrame als HTML-Tabelle mit eigener Klasse rendern
+html_table = df_links_clickable.to_html(escape=False)
+html_table = html_table.replace(
+    '<table border="1" class="dataframe">', 
+    '<table class="match-matrix">'
+)
+
+# Ausgabe in Streamlit
+placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
+
 
 # Extract players/columns from "Links"
 # "LINKS" SHEET LAYOUT ASSUMPTION:
@@ -1097,7 +1204,12 @@ with tab2:
                 continue
 
     # Streamlit: HTML-Output, klickbare Scores
-    placeholder_tab2.markdown(matrix_scores.to_html(escape=False), unsafe_allow_html=True)
+    html_table = matrix_scores.to_html(escape=False)
+    # linke Spalte als <th>
+    html_table = html_table.replace('<tr><td>', '<tr><th>').replace('</td></tr>', '</th></tr>')
+    # eigene Klasse für CSS
+    html_table = html_table.replace('<table border="1" class="dataframe">', '<table class="score-matrix">')
+    placeholder_tab2.markdown(html_table, unsafe_allow_html=True)
 
 with tab3:
     df_links_clickable = df_links.copy()
@@ -1110,13 +1222,10 @@ with tab3:
         )
 
     # Index bleibt als Spielername, keine Unnamed: 0 mehr
-    placeholder_tab3.markdown(df_links_clickable.to_html(escape=False), unsafe_allow_html=True)
-# -----------------------
-# Build League Table / Stats
-# -----------------------
-# -----------------------
-# Build intermediate_scores from df_matches
-# -----------------------
+    html_table = df_links_clickable.to_html(escape=False)
+    html_table = html_table.replace('<table border="1" class="dataframe">', '<table class="match-matrix">')
+    placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
+
 players = df_matches.index.tolist()
 intermediate_scores = {}
 
@@ -1226,17 +1335,17 @@ df_stats = df_stats.sort_values(
 ).reset_index(drop=True)
 
 # --- Render League Table in Streamlit ---
+
 with tab1:
-    placeholder_tab1.markdown(df_stats.to_html(escape=False, index=False), unsafe_allow_html=True)
+    # Tabelle als HTML
+    df_stats_html = df_stats.to_html(escape=False, index=False)
 
     # Excel Last Modified Timestamp
-    placeholder_timestamp = st.empty()
     last_modified = os.path.getmtime(output_file)
     tz = pytz.timezone("Europe/Berlin")
     last_modified_dt = datetime.fromtimestamp(last_modified, tz)
     formatted_time = last_modified_dt.strftime("%b %d, %Y %H:%M %Z")
 
-    placeholder_timestamp.markdown(
-        f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>",
-        unsafe_allow_html=True
-    )
+    # Tabelle + Timestamp kombiniert in denselben Platzhalter schreiben
+    html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
+    placeholder_tab1.markdown(html, unsafe_allow_html=True)
