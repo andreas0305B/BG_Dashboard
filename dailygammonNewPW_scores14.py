@@ -255,8 +255,6 @@ st.markdown(
 
 st.markdown("---")
 
-
-
 # Default Season
 col1, col2 = st.columns([0.6, 5])  # <<< Season schmal (1 Teil), Group breit (4 Teile)
 
@@ -674,6 +672,7 @@ if df_players is not None and df_matches is not None and df_links is not None:
     df_stats = pd.DataFrame(stats, columns=["Player", "Finished", "Won", "Lost", "% Won",
                                             "All +","All -","All Total","Finished +","Finished -","Finished Total"])
 
+
     # MultiIndex-Spalten
     multi_cols = pd.MultiIndex.from_tuples([
         ("", "Player"),
@@ -689,6 +688,11 @@ if df_players is not None and df_matches is not None and df_links is not None:
         ("Finished matches", "Total")
     ])
     df_stats.columns = multi_cols
+    
+    # Spielernamen zu Links machen
+    df_stats[("", "Player")] = df_stats[("", "Player")].apply(
+    lambda p: f'<a href="http://www.dailygammon.com/bg/user/{player_ids[p]}" target="_blank">{p}</a>'
+    )
 
     # Numerische Spalten für sort
     df_stats[("", "Won")] = pd.to_numeric(df_stats[("", "Won")], errors='coerce').fillna(0)
@@ -1355,6 +1359,10 @@ multi_cols = pd.MultiIndex.from_tuples([
     ("Finished matches", "Total")
 ])
 df_stats.columns = multi_cols
+
+df_stats[("", "Player")] = df_stats[("", "Player")].apply(
+    lambda p: f'<a href="http://www.dailygammon.com/bg/user/{player_ids[p]}" target="_blank">{p}</a>'
+)
 
 df_stats = df_stats.sort_values(
     by=[("", "Won"), ("Finished matches", "Total"), ("Finished matches", "+")],
