@@ -121,6 +121,10 @@ import pandas as pd
 import sys
 import pytz
 from datetime import datetime
+import streamlit as st
+import streamlit_authenticator as stauth
+import yaml
+
 
 # --- Login Data ---
 load_dotenv(dotenv_path="a.env")
@@ -134,6 +138,8 @@ payload = {
 }
 
 BASE_URL = "http://dailygammon.com/bg/game/{}/0/list"
+
+
 # -----------------------
 # Streamlit Config & Auswahl
 # -----------------------
@@ -153,7 +159,7 @@ st.markdown(
         margin-top: 0rem !important;
     }
     .main .block-container {
-        max-width: 100% !important;   /* volle Breite ausnutzen */
+        max-width: 100% !important;
         padding-left: 1rem !important; 
         padding-right: 1rem !important;
         padding-top: 0rem !important;
@@ -181,20 +187,25 @@ st.markdown(
     table.match-matrix, table.score-matrix {
         border-collapse: collapse;
         width: 100%;
-        table-layout: fixed;     /* Spalten gleichmäßig */
+        table-layout: fixed;
     }
 
+    /* Standard-Zellen */
     table.match-matrix th, table.match-matrix td,
     table.score-matrix th, table.score-matrix td {
         border: 1px solid #ddd;
         padding: 4px;
-        text-align: center;      /* Match IDs mittig */
-        white-space: nowrap;     /* IDs nicht umbrechen */
-        width: 80px;             /* feste Spaltenbreite */
+        white-space: nowrap;
+        width: 80px;
+        text-align: center;  /* Standard: mittig */
     }
 
-    table.match-matrix th, table.score-matrix th,
-    table.match-matrix tbody th, table.score-matrix tbody th {
+    /* Erste Spalte (Spielernamen) linksbündig + sticky */
+    table.match-matrix th:first-child,
+    table.match-matrix tbody th:first-child,
+    table.score-matrix th:first-child,
+    table.score-matrix tbody th:first-child {
+        text-align: left;
         font-weight: bold;
         position: sticky;
         left: 0;
@@ -203,16 +214,20 @@ st.markdown(
 
     /* Farben nach Systemmodus */
     @media (prefers-color-scheme: dark) {
-        table.match-matrix th, table.score-matrix th,
-        table.match-matrix tbody th, table.score-matrix tbody th {
+        table.match-matrix th:first-child,
+        table.match-matrix tbody th:first-child,
+        table.score-matrix th:first-child,
+        table.score-matrix tbody th:first-child {
             background-color: #000000;
             color: #ffffff;
         }
     }
 
     @media (prefers-color-scheme: light) {
-        table.match-matrix th, table.score-matrix th,
-        table.match-matrix tbody th, table.score-matrix tbody th {
+        table.match-matrix th:first-child,
+        table.match-matrix tbody th:first-child,
+        table.score-matrix th:first-child,
+        table.score-matrix tbody th:first-child {
             background-color: #f0f0f0;
             color: #000000;
         }
@@ -766,7 +781,7 @@ else:
 # Hyperlinks für Match IDs einfügen
 #for col in df_links_clickable.columns:
 #    df_links_clickable[col] = df_links_clickable[col].apply(
-#        lambda mid: f'<a href="http://.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' 
+#        lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' 
 #        if pd.notna(mid) else ""
 #    )
 
