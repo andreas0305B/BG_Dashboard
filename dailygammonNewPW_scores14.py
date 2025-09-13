@@ -252,8 +252,8 @@ with col1:
     season_input = st.selectbox("Season", ["34"], index=0)
 
 with col2:
-    sessions = ["1a", "2a", "2b", "2c", "3a", "3b", "3c", "3d",
-                "4a", "4b", "4c", "4d", "5a", "5b", "5c", "5d"]
+    sessions = ["1a", "2a", "2b", "3a", "3b", "3c",
+                "4a", "4b", "4c", "4d", "5a", "5b", "5c"]
     selection = st.radio("League + Group", sessions, index=1, horizontal=True)
 
 # -----------------------
