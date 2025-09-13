@@ -746,7 +746,7 @@ if df_players is not None and df_matches is not None and df_links is not None:
     # Hyperlinks für Match IDs einfügen
     for col in df_links_clickable.columns:
         df_links_clickable[col] = df_links_clickable[col].apply(
-            lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}#end" target="_blank">{int(mid)}</a>' 
+            lambda mid: f'<a href="http://dailygammon.com/bg/matches/{int(mid)}/0/list#end" target="_blank">{int(mid)}</a>' 
             if pd.notna(mid) else ""
         )
 
