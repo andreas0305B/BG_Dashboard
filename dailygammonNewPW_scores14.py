@@ -126,8 +126,10 @@ from datetime import datetime
 # --- Login Data ---
 load_dotenv(dotenv_path="a.env")
 login_url = "http://dailygammon.com/bg/login"
-DG_LOGIN = os.getenv("DG_LOGIN", "")
-DG_PW = os.getenv("DG_PW", "")
+
+DG_LOGIN = st.secrets["dailygammon"]["login"] if "dailygammon" in st.secrets else os.getenv("DG_LOGIN", "")
+DG_PW = st.secrets["dailygammon"]["password"] if "dailygammon" in st.secrets else os.getenv("DG_PW", "")
+
 payload = {
     "login": DG_LOGIN,
     "password": DG_PW,
@@ -1384,3 +1386,4 @@ with tab1:
     # Tabelle + Timestamp kombiniert in denselben Platzhalter schreiben
     html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
     placeholder_tab1.markdown(html, unsafe_allow_html=True)
+
