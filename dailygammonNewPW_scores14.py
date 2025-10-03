@@ -108,7 +108,6 @@ Core Concepts:
 #   pip install requests beautifulsoup4 openpyxl
 #
 # ============================================================
-
 import requests
 from bs4 import BeautifulSoup
 import openpyxl
@@ -122,13 +121,26 @@ import sys
 import pytz
 from datetime import datetime
 
-
 # --- Login Data ---
-load_dotenv(dotenv_path="a.env")
+load_dotenv(dotenv_path="a.env")  # lokale .env laden
 login_url = "http://dailygammon.com/bg/login"
 
-DG_LOGIN = st.secrets["dailygammon"]["login"] if "dailygammon" in st.secrets else os.getenv("DG_LOGIN", "")
-DG_PW = st.secrets["dailygammon"]["password"] if "dailygammon" in st.secrets else os.getenv("DG_PW", "")
+# Zuerst versuchen, aus Streamlit-Secrets zu laden, sonst .env / Umgebungsvariablen
+try:
+    DG_LOGIN = st.secrets["dailygammon"]["login"]
+    DG_PW = st.secrets["dailygammon"]["password"]
+except Exception:
+    DG_LOGIN = os.getenv("DG_LOGIN", "")
+    DG_PW = os.getenv("DG_PW", "")
+
+# Prüfen, ob Login-Daten vorhanden sind
+if not DG_LOGIN or not DG_PW:
+    st.error("❌ Keine Login-Daten gefunden. Bitte in a.env oder .streamlit/secrets.toml eintragen.")
+    st.stop()
+
+# Debug-Ausgabe (Login maskieren, Passwort nicht ausgeben!)
+masked_login = DG_LOGIN[0] + "*" * (len(DG_LOGIN) - 2) + DG_LOGIN[-1] if len(DG_LOGIN) > 2 else DG_LOGIN
+st.write(f"✅ Login-Daten geladen für Benutzer: {masked_login}")
 
 payload = {
     "login": DG_LOGIN,
@@ -985,64 +997,56 @@ else:
 
 ws_control["A1"].value = "MATCH_IDS_FILLED"
 
+import pandas as pd
+
 # -----------------------------------------------------
-# Step 3: Collect finished matches
-# Purpose:
-#   For every player, fetch their export page.
-#   If a match is marked as finished, extract the winner.
-#   Results are stored in a dictionary for later processing.
-#
-# FINISHED MATCH DETECTION:
-# - We open each player's page and follow "export" links for matches of this season.
-# - The winner is inferred from a simple textual rule (position of "Wins" on the line).
-# - 'finished_by_id' maps match_id -> winner_name for later use in Phase 2.
+# Step 3 (angepasst): Collect finished matches direkt aus Excel-Match-IDs
 # -----------------------------------------------------
 
-for player in players:
-    pid = player_ids.get(player)
-    if not pid:
-        continue
-    url = f"http://www.dailygammon.com/bg/user/{pid}"
+# Links-Sheet auslesen (enthält Match-IDs in Matrixform)
+df_links = pd.read_excel(output_file, sheet_name="Links", header=0, index_col=0)
+df_links.index.name = None
+
+# Dictionary: match_id -> player/opponent
+all_match_ids = {}
+for player in df_links.index:
+    for opponent in df_links.columns:
+        mid = df_links.at[player, opponent]
+        if pd.notna(mid):
+            try:
+                match_id = int(mid)
+                all_match_ids[match_id] = {
+                    "player": player,
+                    "opponent": opponent,
+                    "winner": None
+                }
+            except ValueError:
+                continue  # falls in der Zelle kein numerischer match_id steht
+
+# Für jede match_id die Export-Seite prüfen
+for match_id, row_data in all_match_ids.items():
+    if row_data.get("winner"):
+        continue  # schon erledigt
+
+    export_url = f"http://www.dailygammon.com/bg/export/{match_id}"
     try:
-        r = session.get(url, timeout=30)
-        r.raise_for_status()
+        resp_export = session.get(export_url, timeout=30)
+        resp_export.raise_for_status()
+        text_lines = resp_export.text.splitlines()
     except requests.RequestException:
         continue
-    soup = BeautifulSoup(r.text, "html.parser")
-    for row in soup.find_all("tr"):
-        text = row.get_text(" ", strip=True)
-        if season not in text:
-            continue
-        export_link = row.find("a", href=re.compile(r"/bg/export/\d+"))
-        match_link = row.find("a", href=re.compile(r"/bg/game/\d+/0/"))
-        opponent_link = row.find("a", href=re.compile(r"/bg/user/\d+"))
-        if not export_link or not match_link or not opponent_link:
-            continue
-        try:
-            match_id = int(re.search(r"/bg/game/(\d+)/0/", match_link["href"]).group(1))
-        except Exception:
-            continue
-        opponent_name = opponent_link.text.strip()
-        export_url = f"http://www.dailygammon.com/bg/export/{match_id}"
-        try:
-            resp_export = session.get(export_url, timeout=30)
-            text_lines = resp_export.text.splitlines()
-        except requests.RequestException:
-            continue
-        winner = None
 
-# - 'mid_threshold 24' is a rough character-position cutoff to decide whether the "Wins"
-#   belongs to the left or right player on the export line.
+    winner = None
+    mid_threshold = 24  # Heuristik: Position der "Wins" entscheidet
+    for line in text_lines:
+        if "and the match" in line and "Wins" in line:
+            pos = line.find("Wins")
+            winner = row_data["player"] if pos < mid_threshold else row_data["opponent"]
+            break
 
-        mid_threshold = 24
-        for line in text_lines:
-            if "and the match" in line and "Wins" in line:
-                pos = line.find("Wins")
-                winner = player if pos < mid_threshold else opponent_name
-                break
-        if winner:
-            finished_by_id[match_id] = winner
-
+    if winner:
+        finished_by_id[match_id] = winner
+        row_data["winner"] = winner  # optional: gleich im Dict aktualisieren
 # -----------------------------------------------------
 # Phase 1: Write intermediate scores
 # Purpose:
@@ -1386,4 +1390,3 @@ with tab1:
     # Tabelle + Timestamp kombiniert in denselben Platzhalter schreiben
     html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
     placeholder_tab1.markdown(html, unsafe_allow_html=True)
-
