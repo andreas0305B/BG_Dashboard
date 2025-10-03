@@ -743,10 +743,15 @@ if df_players is not None and df_matches is not None and df_links is not None:
                 left_score = df_matches.iloc[i, col_left]
                 right_score = df_matches.iloc[i, col_right]
                 match_id = df_links.iloc[i, j]
-                if pd.notna(left_score) and pd.notna(right_score) and pd.notna(match_id):
+                                
+                if pd.notna(match_id):
+                # NaN → 0 umwandeln
+                    lscore = int(left_score) if pd.notna(left_score) else 0
+                    rscore = int(right_score) if pd.notna(right_score) else 0
+                    
                     matrix_scores.at[player, opponent] = (
                         f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end" target="_blank">'
-                        f'{int(left_score)} : {int(right_score)}</a>'
+                        f'{lscore} : {rscore}</a>'
                     )
             except IndexError:
                 continue
@@ -852,6 +857,55 @@ while True:
     c += 1
 
 col_index_links = {name: 2 + i for i, name in enumerate(col_opponents_links)}
+
+# ====== Early fallback: fülle leere Match-Zellen (wenn match_id existiert) mit 0:0 ======
+players_in_matches = []
+r = 4
+while True:
+    nm = ws_matches.cell(row=r, column=1).value
+    if not nm:
+        break
+    players_in_matches.append(str(nm).strip())
+    r += 1
+
+if players_in_matches:
+    for i, player_name in enumerate(row_players_links, start=2):
+        for opp in col_opponents_links:
+            if player_name == opp:
+                continue
+
+            c = col_index_links.get(opp)
+            if not c:
+                continue
+
+            mid = ws_links.cell(row=i, column=c).value
+            if not mid:
+                continue
+
+            try:
+                r_idx = players_in_matches.index(player_name) + 4
+                c_base = players_in_matches.index(opp)
+            except ValueError:
+                continue
+            
+            c_left = 2 + c_base * 2   # col_start ist 2
+            c_right = c_left + 1
+
+            left_cell = ws_matches.cell(row=r_idx, column=c_left).value
+            right_cell = ws_matches.cell(row=r_idx, column=c_right).value
+
+            if (left_cell is None or left_cell == "") and (right_cell is None or right_cell == ""):
+                ws_matches.cell(row=r_idx, column=c_left, value=0)
+                ws_matches.cell(row=r_idx, column=c_right, value=0)
+                print(f"Auto-fill 0:0 for {player_name} vs {opp} (match_id={int(mid) if str(mid).strip().isdigit() else mid})")
+
+# nach Auto-fill 0:0 Schleife
+wb_out.save(output_file)
+print("💾 0:0 fallback values saved.")
+
+
+# =====================================================================================
+
 # -----------------------------------------------------
 # Step 1 (light): Build match_id_to_excel from Excel (no web fetch)
 # -----------------------------------------------------
@@ -1143,38 +1197,77 @@ print("✅ Phase 1: completed")
 # Purpose:
 #   For matches identified as finished, write the final
 #   winner score (11 points) into the correct player cell
-#   in the "Matches" sheet.
+#   and set the opponent score from export.
 # -----------------------------------------------------
-
 print("🔎 Phase 2: Final results (set winner = 11) ...")
 for match_id, winner_name in finished_by_id.items():
+    # Erst versuchen über match_id_to_excel, sonst fallback auf all_match_ids
     info = match_id_to_excel.get(match_id)
     if not info:
-        continue
-    excel_player, excel_opponent, switched_flag = info
+        info = all_match_ids.get(match_id)
+        if not info:
+            continue
+        excel_player = info["player"]
+        excel_opponent = info["opponent"]
+        switched_flag = False
+    else:
+        excel_player, excel_opponent, switched_flag = info
+
     try:
         r_idx = players_in_matches.index(excel_player) + 4
         c_base = players_in_matches.index(excel_opponent)
     except ValueError:
         continue
+
     c_left = col_start + c_base * 2
     c_right = c_left + 1
 
-    # Write 11 to the correct winner cell
-
     winner_lower = winner_name.strip().lower()
+
+    # --- Gewinnerzelle auf 11 setzen und Gegner-Spalte merken ---
     if switched_flag:
         if winner_lower == excel_player.lower():
             ws_matches.cell(row=r_idx, column=c_right, value=11)
+            opponent_col = c_left
+            opponent_name = excel_opponent
         elif winner_lower == excel_opponent.lower():
             ws_matches.cell(row=r_idx, column=c_left, value=11)
+            opponent_col = c_right
+            opponent_name = excel_player
+        else:
+            continue
     else:
         if winner_lower == excel_player.lower():
             ws_matches.cell(row=r_idx, column=c_left, value=11)
+            opponent_col = c_right
+            opponent_name = excel_opponent
         elif winner_lower == excel_opponent.lower():
             ws_matches.cell(row=r_idx, column=c_right, value=11)
+            opponent_col = c_left
+            opponent_name = excel_player
+        else:
+            continue
+
+    # --- Gegnerwert aus Export holen und setzen ---
+    try:
+        export_url = f"http://www.dailygammon.com/bg/export/{match_id}"
+        resp = session.get(export_url, timeout=30)
+        resp.raise_for_status()
+        lines = resp.text.splitlines()
+
+        for line in reversed(lines):
+            if opponent_name.lower() in line.lower() and "Wins" not in line:
+                m = re.search(r"(\d+)$", line.strip())
+                if m:
+                    score = int(m.group(1))
+                    ws_matches.cell(row=r_idx, column=opponent_col, value=score)
+                break
+    except requests.RequestException:
+        print(f"⚠️ Exportseite konnte nicht geholt werden für match_id {match_id}")
 
 wb_out.save(output_file)
+
+
 # Close workbook automatically only if called from wrapper
 if AUTO_MODE:
     wb_out.close()
