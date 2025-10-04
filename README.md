@@ -1,4 +1,3 @@
-Prototype - issues w/ fetch and mainly wrongly invited matches
 🎲 Backgammon Championship Dashboard
 This is a Streamlit web app to explore DailyGammon championship data.
 👉 Try it live on Streamlit
