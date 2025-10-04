@@ -140,7 +140,6 @@ if not DG_LOGIN or not DG_PW:
 
 # Debug-Ausgabe (Login maskieren, Passwort nicht ausgeben!)
 masked_login = DG_LOGIN[0] + "*" * (len(DG_LOGIN) - 2) + DG_LOGIN[-1] if len(DG_LOGIN) > 2 else DG_LOGIN
-st.write(f"✅ Login-Daten geladen für Benutzer: {masked_login}")
 
 payload = {
     "login": DG_LOGIN,
