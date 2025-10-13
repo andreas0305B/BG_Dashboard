@@ -2,29 +2,11 @@
 DailyGammon Score Synchronizer
 ------------------------------
 
-This script synchronizes tournament match results between an Excel results table
+This script synchronizes tournament match results between an Neon DB results table
 and DailyGammon (DG). It automates the process of filling in missing match IDs,
 fetching match results, and updating scores into the correct table cells.
 
-This script processes match results for a specific league and writes them to Excel. 
-This script can also run across multiple leagues when used together with the wrapper script!
-
-
-Usage:
-    - Manual mode (default):
-        Simply run the script without arguments. 
-        Example: python dailygammon.py
-        -> Uses default league "4d" hardwired in the script
-        -> Keeps Excel workbook open for manual review
-
-    - Command line / wrapper mode:
-        Provide the league as the first argument and optionally '--auto' as the second.
-        Example: python dailygammon.py 2b --auto
-        -> Processes league "2b"
-        -> Closes Excel workbook automatically (needed when running multiple leagues in sequence)
-
-This makes it possible to run the script across multiple leagues 
-without changing the source code manually.
+This script processes match results for a specific league and writes them to Neon DB. 
 
 
 Core Concepts:
@@ -50,64 +32,11 @@ Core Concepts:
    - Each match_id is requested from DG at most once.
    - A simple dict (`html_cache`) maps { match_id -> html } to reduce load.
 
-4. Idempotence
-   - Running the script multiple times does not duplicate work.
-   - IDs are inserted only if cells are empty; scores are written only if
-     the cell does not already contain a final result (e.g., "11").
-
-5. Score Writing
-   - For each resolved match, the correct Excel row and columns are located
-     via player/opponent name mapping.
-   - Exact (case-insensitive) name matches are preferred.
-   - If no exact match is found, a heuristic rule is applied:
-       * Check whether one name appears as a substring of the other.
-   - If the heuristic is inconclusive, the match is skipped for safety.
-
-6. Safety Rules
+4. Safety Rules
    - The script never overwrites an existing score of 11.
-   - If names cannot be reliably mapped, the match is skipped instead of
-     risking a wrong write.
 
 """
 
-
-# ============================================================
-# Script Purpose:
-# This script automatically updates match results for a DailyGammon league season.
-# It connects to DailyGammon with your login credentials, collects all match IDs,
-# downloads intermediate/final scores, and writes them into the Excel results file.
-#
-# Workflow in summary:
-#   1. Login to DailyGammon with your credentials
-#   2. Read the player list from the Excel "Players" sheet
-#   3. Detect already known matches from the "Links" sheet
-#   4. Find and insert missing match IDs automatically
-#   5. Update "Matches" sheet with intermediate 
-#   6. For finished matches, set the final winner score to 11
-#
-# Excel file requirement:
-# - Requires Excel file "<season>th_Backgammon-championships_<league>.xlsm"
-#   The corresponding Excel file (e.g. "34th_Backgammon-championships_4d.xlsm")
-#   must be located in the same folder as this script.
-#
-# - Excel sheets used:
-#       * "Players" → base player list
-#       * "Links"   → references to match IDs
-#       * "Matches" → current scores
-# - Important: Scores are only updated if the match is not yet marked as finished (11).
-#
-# Before running, configure:
-#   - Your User ID and Password (variables: payload["login"], payload["password"])
-#   - Current Season number (variable: saison_nummer, e.g. "34")
-#   - League (variable: liga, e.g. "4d")
-#
-# Required Python libraries:
-#   requests, beautifulsoup4
-#
-# If not installed, run:
-#   pip install requests beautifulsoup4 openpyxl
-#
-# ============================================================
 import requests
 from bs4 import BeautifulSoup
 import os
@@ -146,7 +75,6 @@ payload = {
 }
 
 BASE_URL = "http://dailygammon.com/bg/game/{}/0/list"
-
 
 # Werte aus st.secrets (Cloud) oder os.getenv (lokal)
 
@@ -322,22 +250,8 @@ with col2:
     # Show as radio buttons horizontally
     selection = st.radio("League + Group", groups, index=0, horizontal=True)
 
-# -------------------------------
-# Optional: Debug output
-# -------------------------------
 st.write(f"Selected Season: {season_input}, League/Group: {selection}")
 
-
-# Default Season
-#col1, col2 = st.columns([0.6, 5])  # <<< Season schmal (1 Teil), Group breit (4 Teile)
-
-#with col1:
-#    season_input = st.selectbox("Season", ["34"], index=0)
-
-#with col2:
-#    sessions = ["1a", "2a", "2b", "3a", "3b", "3c",
-#                "4a", "4b", "4c", "4d", "5a", "5b", "5c"]
-#    selection = st.radio("League + Group", sessions, index=1, horizontal=True)
 
 # -----------------------
 # Variablen für Script
@@ -357,7 +271,6 @@ AUTO_MODE = "--auto" in sys.argv
 
 # Einheitliche Dateinamen
 file = f"{saison_nummer}th_Backgammon-championships_{liga}.xlsm"
-output_file = f"{saison_nummer}th_Backgammon-championships_{liga}_output.xlsx"
 season = f"{saison_nummer}th-season-{liga}"
 
 # Initialisierung, damit sie immer existieren
@@ -365,11 +278,7 @@ df_players = None
 df_matches = None
 df_links = None
 
-print("="*50)
 print(f"▶ Script started – collecting links and data for {season}")
-print(f"📂 Results saved in Excel file: {file}")
-print("="*50)
-
 
 # -----------------------------
 # Read players from DB (filtered by season + league)
@@ -389,7 +298,6 @@ def run_query(query: str, params: tuple = None):
     except Exception as e:
         print(f"⚠️ DB read failed: {e}")
         return pd.DataFrame()
-
 
 def execute_query(query: str, params: tuple = None):
     try:
@@ -431,16 +339,12 @@ if df_players.empty:
 
 players = df_players["player_name"].tolist()
 
-print("=" * 50)
 print(f"▶ Streamlit started – analyzing group {GROUP_ID} ({saison_nummer}-{liga})")
-print(f"✅ {len(players)} Spieler geladen")
-print("=" * 50)
-
 
 # -----------------------------------------------------
 # --- DataFrame für Link-Matrix (optional) ---
 # -----------------------------------------------------
-# Spieler-vs-Spieler Matrix, bleibt vorerst, falls du sie für Streamlit oder Reports brauchst
+
 df_links_from_db = run_query("""
     SELECT
         m.match_id,
@@ -451,7 +355,6 @@ df_links_from_db = run_query("""
     JOIN players p2 ON m.opponent_id = p2.player_id
     WHERE m.group_id = %s;
 """, (GROUP_ID,))
-
 
 df_links = pd.DataFrame(index=players, columns=players)
 df_links_clickable = df_links.copy()  # später evtl. klickbare Links für Streamlit
@@ -465,19 +368,14 @@ match_id_to_excel = {}  # nur relevant, falls später Excel erstellt wird
 html_cache = {}         # optional: HTML-Caching für Spielerstatistiken
 finished_by_id = {}     # match_id -> finished boolean
 
-
 # -----------------------------------------------------
 # --- Login session ---
 # -----------------------------------------------------
-# -----------------------------------------------------
-# Function: login_session
 # Purpose:
 #   Opens a persistent HTTP session with DailyGammon,
 #   logs in with your credentials, and returns the session
 #   so all following requests are authenticated.
 # -----------------------------------------------------
-
-
 def login_session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -486,12 +384,10 @@ def login_session() -> requests.Session:
     return s
 session = login_session()
 
-
 # -----------------------------------------------------
 # --- Collect matches per player ---
 # -----------------------------------------------------
 # -----------------------------------------------------
-# Function: get_player_matches
 # Purpose:
 #   Collects all matches for a specific player in the
 #   given season. It scrapes the DailyGammon user page
@@ -499,8 +395,6 @@ session = login_session()
 #     - Opponent name
 #     - Opponent ID
 #     - Match ID
-#
-# - Filters table rows by the 'season' string to avoid pulling old matches.
 # -----------------------------------------------------
 
 def get_player_matches(session: requests.Session, player_id, season):
@@ -526,8 +420,6 @@ def get_player_matches(session: requests.Session, player_id, season):
 # -----------------------------------------------------
 # --- Helper functions: fetch HTML & extract scores ---
 # -----------------------------------------------------
-# -----------------------------------------------------
-# Function: fetch_list_html
 # Purpose:
 #   Downloads the HTML page for a specific match ID.
 #   Returns the HTML content or None if the request failed.
@@ -609,7 +501,6 @@ def map_scores(player, opponent, left_name, right_name, left_score, right_score,
         if pn in rn:
             return right_score, left_score
     return None
-
 
     # =============================
     # Custom CSS für CI
@@ -829,8 +720,8 @@ with tab1:
     html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
     placeholder_tab1.markdown(html, unsafe_allow_html=True)
 
-
 # --- Tab 2: Score Matrix ---
+players = sorted(players)
 matrix_scores = pd.DataFrame("", index=players, columns=players)
 
 # Fetch all finished matches for the selected group (filtered by GROUP_ID)
@@ -845,8 +736,7 @@ with conn.cursor() as cur:
         FROM matches m
         JOIN players p1 ON m.player_id = p1.player_id
         JOIN players p2 ON m.opponent_id = p2.player_id
-        WHERE m.finished = TRUE
-          AND m.group_id = %s;
+        WHERE m.group_id = %s;
     """, (GROUP_ID,))
     match_rows = cur.fetchall()
 
@@ -857,6 +747,9 @@ for match_id, player, opponent, left_score, right_score in match_rows:
             f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end" target="_blank">'
             f"{int(left_score)} : {int(right_score)}</a>"
         )
+
+# Reindex to enforce alphabetical order (rows & columns)
+matrix_scores = matrix_scores.reindex(index=players, columns=players)
 
 # Minimaler Eingriff für linke Spalte als <th> und eigene CSS-Klasse
 html_table = matrix_scores.to_html(escape=False)
@@ -869,32 +762,34 @@ html_table = (
 placeholder_tab2.markdown(html_table, unsafe_allow_html=True)
 
 # --- Tab 3: Match ID Matrix ---
+# --- Tab 3: Match ID Matrix (optimized like Tab 2) ---
 df_links_clickable = pd.DataFrame("", index=players, columns=players)
 
-# Fülle die Matrix mit Match-IDs aus match_id_to_excel (DB-basiert)
-for row_player in players:
-    for col_opponent in players:
-        if row_player == col_opponent:
-            df_links_clickable.at[row_player, col_opponent] = ""
-            continue
-        
-        # Suche Match zwischen row_player und col_opponent
-        match_info = match_id_to_excel.get((row_player, col_opponent))
-        if match_info:
-            match_id = match_info[0]  # match_id in tuple (match_id, opponent_name, switched_flag)
-            link = f'<a href="http://dailygammon.com/bg/game/{match_id}/0/list#end">{match_id}</a>'
-        else:
-            link = ""
-        
-        df_links_clickable.at[row_player, col_opponent] = link
+with conn.cursor() as cur:
+    cur.execute("""
+        SELECT 
+            m.match_id,
+            p1.player_name AS player_name,
+            p2.player_name AS opponent_name
+        FROM matches m
+        JOIN players p1 ON m.player_id = p1.player_id
+        JOIN players p2 ON m.opponent_id = p2.player_id
+        WHERE m.group_id = %s;
+    """, (GROUP_ID,))
+    match_rows = cur.fetchall()
 
-# Render als HTML mit gleichem CSS wie vorher
+# Fill matrix directly
+for match_id, player, opponent in match_rows:
+    df_links_clickable.at[player, opponent] = (
+        f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end">{int(match_id)}</a>'
+    )
+
+# Render
 html_table = df_links_clickable.to_html(escape=False)
 html_table = html_table.replace(
     '<table border="1" class="dataframe">', 
     '<table class="match-matrix">'
 )
-
 placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
 
 # -----------------------------------------------------
@@ -986,12 +881,11 @@ for match_id, (player_name, opponent_name, switched_flag) in match_id_to_db.item
 # -----------------------------------------------------
 # Step 2: Fill missing match IDs from DailyGammon (DB version)
 # -----------------------------------------------------
-
 # DB flag handling (replace Excel ws_control)
+
 skip_id_fetch = False
 if "MATCH_IDS_FILLED" in globals() and MATCH_IDS_FILLED:
     skip_id_fetch = True
-    print("✅ All match IDs are marked as filled — skipping DailyGammon fetch.")
 
 if not skip_id_fetch:
     # Build player_name -> player_id mapping only for selected group
@@ -1009,7 +903,6 @@ if not skip_id_fetch:
     for player in players:
         pid = player_map.get(player)
         if not pid:
-            print(f"⚠️ Player ID not found in DB: {player}")
             continue
 
         # Determine missing opponents (within the same group)
@@ -1109,7 +1002,6 @@ for match_id, row_data in all_match_ids.items():
         resp_export.raise_for_status()
         text_lines = resp_export.text.splitlines()  # Zeilenweise aufteilen
     except requests.RequestException:
-        print(f"⚠️ Could not fetch export for match_id={match_id}, skipping.")
         continue
 
     # --- Winner detection heuristic (Excel-style, bottom-up) ---
@@ -1126,12 +1018,10 @@ for match_id, row_data in all_match_ids.items():
     if winner:
         finished_by_id[match_id] = winner
         row_data["winner"] = winner
-        print(f"✅ Detected winner for match_id={match_id}: {winner}")
     else:
         print(f"⚠️ No winner found in export for match_id={match_id}")
 
 print("🏁 Phase 1 completed (winners detected).")
-print("=" * 50)
 
 # -----------------------------------------------------
 # Phase 1 (DB): Write intermediate scores
@@ -1141,10 +1031,6 @@ print("=" * 50)
 #   IMPORTANT: If a score of 11 is already present,
 #   the match is considered finished and will not be overwritten.
 # -----------------------------------------------------
-
-print("🔎 Phase 1 (DB): Writing intermediate scores for matches...")
-
-
 # -----------------------------------------------------
 # Collect all players from DB (nur für aktuelle Gruppe)
 # -----------------------------------------------------
@@ -1179,7 +1065,6 @@ def update_score_in_db(player_name, opponent_name, player_score, opponent_score,
             """, (player_name, opponent_name, GROUP_ID))
             row = cur.fetchone()
             if not row:
-                print(f"⚠️ Match not found in DB: {player_name} vs {opponent_name} (group {GROUP_ID})")
                 return False
 
             match_pk, left_score, right_score = row
@@ -1197,7 +1082,6 @@ def update_score_in_db(player_name, opponent_name, player_score, opponent_score,
             conn.commit()
             return True
     except Exception as e:
-        print(f"⚠️ Error updating score for {player_name} vs {opponent_name}: {e}")
         return False
 
 # -----------------------------------------------------
@@ -1251,12 +1135,9 @@ for match_id, (db_player, db_opponent, switched_flag) in list(match_id_to_db.ite
     # Update scores directly in Neon DB
     update_score_in_db(db_player, db_opponent, player_score, opponent_score, switched_flag)
 
-print("✅ Phase 1 (Neon DB): completed")
-
 # -----------------------------------------------------
 # Phase 2 (DB): Final results – Set winners to 11 points
 # -----------------------------------------------------
-print("🔎 Phase 2 (DB): Final results (set winner = 11) ...")
 
 def update_match_score_in_db(match_id: int, winner_name: str, conn, group_id=None):
     """
@@ -1285,15 +1166,10 @@ def update_match_score_in_db(match_id: int, winner_name: str, conn, group_id=Non
         row = cur.fetchone()
 
         if not row:
-            print(f"⚠️ No DB record found for match_id={match_id} (group check: {group_id})")
             return
 
         switched_flag, db_player_name, db_opponent_name = row
         switched_flag = bool(switched_flag)
-
-        # Debug output
-        print(f"→ match_id={match_id} | winner='{winner_name}' | player='{db_player_name}' | "
-              f"opponent='{db_opponent_name}' | switched_flag={switched_flag}")
 
         # Determine which column (left/right) corresponds to the winner
         if winner_name == db_player_name:
@@ -1303,7 +1179,6 @@ def update_match_score_in_db(match_id: int, winner_name: str, conn, group_id=Non
             # right player in DB schema
             col = "right_score" if not switched_flag else "left_score"
         else:
-            print(f"⚠️ Winner name mismatch for match_id={match_id}, skipping.")
             return
 
         # Update the DB: set winner column to 11 and finished flag to TRUE
@@ -1313,7 +1188,6 @@ def update_match_score_in_db(match_id: int, winner_name: str, conn, group_id=Non
             WHERE match_id = %s;
         """, (match_id,))
         conn.commit()
-        print(f"✅ Updated match_id={match_id}: set {col}=11, finished=TRUE")
 
 print("🔎 Phase 2 (DB): Final results (set winner = 11) ...")
 
@@ -1331,7 +1205,6 @@ for match_id, winner_name in finished_by_id.items():
         row = cur.fetchone()
 
     if not row:
-        print(f"⚠️ No DB record found for match_id={match_id}")
         continue
 
     switched_flag, db_player, db_opponent = row
@@ -1342,7 +1215,6 @@ for match_id, winner_name in finished_by_id.items():
     elif winner_name == db_opponent:
         col = "right_score" if not switched_flag else "left_score"
     else:
-        print(f"⚠️ Winner '{winner_name}' not matching DB players for match_id={match_id}")
         continue
 
     # Direkter DB-Update
@@ -1354,10 +1226,7 @@ for match_id, winner_name in finished_by_id.items():
         """, (match_id,))
         conn.commit()
 
-    print(f"✅ Updated match_id={match_id}: {col}=11 (winner={winner_name})")
-
 print("🏁 Phase 2 completed (DB updated).")
-print("=" * 50)
 
 # -----------------------
 # DB Query Helpers (improved)
