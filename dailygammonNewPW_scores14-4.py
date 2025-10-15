@@ -587,16 +587,21 @@ with conn.cursor() as cur:
         FROM matches m
         JOIN players p1 ON m.player_id = p1.player_id
         JOIN players p2 ON m.opponent_id = p2.player_id
-        WHERE m.finished = TRUE
-        AND m.group_id = %s;
+        WHERE m.group_id = %s;
     """, (GROUP_ID,))
     match_rows = cur.fetchall()
 
-# Build intermediate score map
+# Build intermediate score map (robust gegen NULL-Werte)
 intermediate_scores = {}
+
 for row in match_rows:
     match_id, player, opponent, left_score, right_score, finished = row
-    intermediate_scores[(player, opponent)] = (left_score, right_score)
+
+    # Wenn Scores NULL sind → 0 setzen
+    s_player = int(left_score) if left_score is not None else 0
+    s_opponent = int(right_score) if right_score is not None else 0
+
+    intermediate_scores[(player, opponent)] = (s_player, s_opponent)
 
 # Build League Stats
 num_players = len(players)
@@ -713,10 +718,15 @@ df_stats = df_stats.sort_values(
     ascending=[False, False, False],
 ).reset_index(drop=True)
 
+with conn.cursor() as cur:
+    cur.execute("SELECT last_updated FROM groups WHERE group_id = %s;", (GROUP_ID,))
+    row = cur.fetchone()
+    last_updated_dt = row[0] if row and row[0] else datetime.now(pytz.timezone("Europe/Berlin"))
+
 # Tabelle in Platzhalter schreiben
 with tab1:
     df_stats_html = df_stats.to_html(escape=False, index=False)
-    formatted_time = datetime.now(pytz.timezone("Europe/Berlin")).strftime("%b %d, %Y %H:%M %Z")
+    formatted_time = last_updated_dt.astimezone(pytz.timezone("Europe/Berlin")).strftime("%b %d, %Y %H:%M %Z")
     html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
     placeholder_tab1.markdown(html, unsafe_allow_html=True)
 
@@ -762,7 +772,6 @@ html_table = (
 placeholder_tab2.markdown(html_table, unsafe_allow_html=True)
 
 # --- Tab 3: Match ID Matrix ---
-# --- Tab 3: Match ID Matrix (optimized like Tab 2) ---
 df_links_clickable = pd.DataFrame("", index=players, columns=players)
 
 with conn.cursor() as cur:
@@ -780,9 +789,17 @@ with conn.cursor() as cur:
 
 # Fill matrix directly
 for match_id, player, opponent in match_rows:
-    df_links_clickable.at[player, opponent] = (
-        f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end">{int(match_id)}</a>'
-    )
+    if match_id is not None:
+        try:
+            match_id_int = int(match_id)
+            df_links_clickable.at[player, opponent] = (
+                f'<a href="http://dailygammon.com/bg/game/{match_id_int}/0/list#end" '
+                f'target="_blank">{match_id_int}</a>'
+            )
+        except (TypeError, ValueError):
+            df_links_clickable.at[player, opponent] = ""
+    else:
+        df_links_clickable.at[player, opponent] = ""
 
 # Render
 html_table = df_links_clickable.to_html(escape=False)
@@ -791,6 +808,12 @@ html_table = html_table.replace(
     '<table class="match-matrix">'
 )
 placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
+
+# Prüfen, ob noch leere Zellen existieren
+if (df_links_clickable == "").any().any():
+    needs_refresh = True
+else:
+    needs_refresh = False
 
 # -----------------------------------------------------
 # Build mapping directly from Neon DB
@@ -816,7 +839,8 @@ with conn.cursor() as cur:
 
 # Fill mapping
 for match_id, player_name, opponent_name, switched_flag in match_rows:
-    match_id_to_db[match_id] = (player_name, opponent_name, bool(switched_flag))
+    if match_id is not None:
+        match_id_to_db[int(match_id)] = (player_name, opponent_name, bool(switched_flag))
 
 # -----------------------------------------------------
 # Step 1: Check existing matches with HTML fetch (DB version)
@@ -1429,75 +1453,81 @@ with tab2:
 # -----------------------
 # Tab 3: Match ID Matrix (Neon DB version, angepasst an deine Tabellenstruktur)
 # -----------------------
-df_links_from_db = run_query("""
-    SELECT
-        m.match_id,
-        p1.player_name AS player_name,
-        p2.player_name AS opponent_name
-    FROM matches m
-    JOIN players p1 ON m.player_id = p1.player_id
-    JOIN players p2 ON m.opponent_id = p2.player_id
-    JOIN player_groups pg1 ON pg1.player_id = p1.player_id
-    WHERE pg1.group_id = %s
-""", (GROUP_ID,))
+if needs_refresh:
 
-df_matches_from_db = run_query("""
-    SELECT
-        m.match_id,
-        m.left_score,
-        m.right_score,
-        p1.player_name AS player_name,
-        p2.player_name AS opponent_name
-    FROM matches m
-    JOIN players p1 ON m.player_id = p1.player_id
-    JOIN players p2 ON m.opponent_id = p2.player_id
-    JOIN player_groups pg1 ON pg1.player_id = p1.player_id
-    WHERE pg1.group_id = %s
-""", (GROUP_ID,))
+    df_links_from_db = run_query("""
+        SELECT
+            m.match_id,
+            p1.player_name AS player_name,
+            p2.player_name AS opponent_name
+        FROM matches m
+        JOIN players p1 ON m.player_id = p1.player_id
+        JOIN players p2 ON m.opponent_id = p2.player_id
+        JOIN player_groups pg1 ON pg1.player_id = p1.player_id
+        WHERE pg1.group_id = %s
+    """, (GROUP_ID,))
 
-# 🔹 Load players list for selected group
-df_players = run_query("""
-    SELECT p.player_name
-    FROM players p
-    JOIN player_groups pg ON pg.player_id = p.player_id
-    WHERE pg.group_id = %s
-    ORDER BY p.player_name;
-""", (GROUP_ID,))
+    df_matches_from_db = run_query("""
+        SELECT
+            m.match_id,
+            m.left_score,
+            m.right_score,
+            p1.player_name AS player_name,
+            p2.player_name AS opponent_name
+        FROM matches m
+        JOIN players p1 ON m.player_id = p1.player_id
+        JOIN players p2 ON m.opponent_id = p2.player_id
+        JOIN player_groups pg1 ON pg1.player_id = p1.player_id
+        WHERE pg1.group_id = %s
+    """, (GROUP_ID,))
 
-# Robust extraction
-if "player_name" in df_players.columns:
-    players = df_players["player_name"].astype(str).tolist()
-elif df_players.shape[1] >= 1:
-    players = df_players.iloc[:, 0].astype(str).tolist()
+    # 🔹 Load players list for selected group
+    df_players = run_query("""
+        SELECT p.player_name
+        FROM players p
+        JOIN player_groups pg ON pg.player_id = p.player_id
+        WHERE pg.group_id = %s
+        ORDER BY p.player_name;
+    """, (GROUP_ID,))
+
+    # Robust extraction
+    if "player_name" in df_players.columns:
+        players = df_players["player_name"].astype(str).tolist()
+    elif df_players.shape[1] >= 1:
+        players = df_players.iloc[:, 0].astype(str).tolist()
+    else:
+        players = []
+
+    # 🔹 Initialize clickable links matrix
+    df_links_clickable = pd.DataFrame("", index=players, columns=players)
+
+    for player in players:
+        for opponent in players:
+            if player == opponent:
+                continue
+
+            match_row = df_links_from_db[
+                (df_links_from_db["player_name"] == player)
+                & (df_links_from_db["opponent_name"] == opponent)
+            ]
+            if match_row.empty:
+                continue
+
+            match_id = match_row["match_id"].values[0]
+            if pd.notna(match_id):
+                df_links_clickable.at[player, opponent] = (
+                    f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end" '
+                    f'target="_blank">{int(match_id)}</a>'
+                )
+
+    # 🔹 Render HTML table in Streamlit
+    html_table = df_links_clickable.to_html(escape=False)
+    html_table = html_table.replace('<table border="1" class="dataframe">', '<table class="match-matrix">')
+    placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
+
 else:
-    players = []
-
-# 🔹 Initialize clickable links matrix
-df_links_clickable = pd.DataFrame("", index=players, columns=players)
-
-for player in players:
-    for opponent in players:
-        if player == opponent:
-            continue
-
-        match_row = df_links_from_db[
-            (df_links_from_db["player_name"] == player)
-            & (df_links_from_db["opponent_name"] == opponent)
-        ]
-        if match_row.empty:
-            continue
-
-        match_id = match_row["match_id"].values[0]
-        if pd.notna(match_id):
-            df_links_clickable.at[player, opponent] = (
-                f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end" '
-                f'target="_blank">{int(match_id)}</a>'
-            )
-
-# 🔹 Render HTML table in Streamlit
-html_table = df_links_clickable.to_html(escape=False)
-html_table = html_table.replace('<table border="1" class="dataframe">', '<table class="match-matrix">')
-placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
+    # Kein Re-Render nötig – Tab 3 bleibt wie vorher
+    pass
 
 # 🔹 Build intermediate_scores from matches table
 intermediate_scores = {}
@@ -1627,17 +1657,28 @@ df_stats = df_stats.sort_values(
 ).reset_index(drop=True)
 
 # --- Render League Table in Streamlit ---
-
 with tab1:
     # Tabelle als HTML
     df_stats_html = df_stats.to_html(escape=False, index=False)
 
-    # DB Last Updated Timestamp
-    # Falls DB keinen Timestamp liefert, nehmen wir einfach "jetzt"
-    tz = pytz.timezone("Europe/Berlin")
-    last_modified_dt = datetime.now(tz)
-    formatted_time = last_modified_dt.strftime("%b %d, %Y %H:%M %Z")
+    # DB Last Updated (letzte echte Änderung)
+    with conn.cursor() as cur:
+        cur.execute("SELECT last_updated FROM groups WHERE group_id = %s;", (GROUP_ID,))
+        row = cur.fetchone()
+        last_changed_dt = row[0] if row and row[0] else None
 
-    # Tabelle + Timestamp kombiniert in denselben Platzhalter schreiben
-    html = df_stats_html + f"<p style='font-size:12px; color:gray;'>Last updated: {formatted_time}</p>"
+    # Letztes Laden/Refresh (jetzt)
+    tz = pytz.timezone("Europe/Berlin")
+    last_loaded_dt = datetime.now(tz)
+
+    # Formatieren
+    last_changed_str = last_changed_dt.astimezone(tz).strftime("%b %d, %Y %H:%M %Z") if last_changed_dt else "n/a"
+    last_loaded_str = last_loaded_dt.strftime("%b %d, %Y %H:%M %Z")
+
+    # Tabelle + beide Timestamps kombinieren
+    html = (
+        df_stats_html +
+        f"<p style='font-size:12px; color:gray;'>Last changed: {last_changed_str} | Last loaded: {last_loaded_str}</p>"
+    )
+
     placeholder_tab1.markdown(html, unsafe_allow_html=True)
