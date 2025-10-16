@@ -1387,7 +1387,6 @@ with tab2:
         WHERE m.group_id = %s;
     """, (GROUP_ID,))
 
-
     # 🔹 Spielerliste für ausgewählte GROUP_ID
     df_players = run_query("""
         SELECT p.player_name
@@ -1411,6 +1410,16 @@ with tab2:
         opponents = players
         matrix_scores = pd.DataFrame("", index=players, columns=opponents)
 
+        # ✅ Precompute dicts for fast lookup
+        link_map = {
+            (row.player_name, row.opponent_name): row.match_id
+            for row in df_links_from_db.itertuples(index=False)
+        }
+        score_map = {
+            (row.player_name, row.opponent_name): (row.left_score, row.right_score)
+            for row in df_matches_from_db.itertuples(index=False)
+        }
+
         # 🔁 Populate matrix
         for player in players:
             for opponent in opponents:
@@ -1418,24 +1427,16 @@ with tab2:
                     matrix_scores.at[player, opponent] = ""
                     continue
 
-                match_row = df_links_from_db[
-                    (df_links_from_db["player_name"] == player)
-                    & (df_links_from_db["opponent_name"] == opponent)
-                ]
-                if match_row.empty:
+                # ✅ optimized lookup instead of DataFrame filters
+                match_id = link_map.get((player, opponent))
+                if not match_id:
                     continue
 
-                match_id = match_row["match_id"].values[0]
-
-                match_score_row = df_matches_from_db[
-                    (df_matches_from_db["player_name"] == player)
-                    & (df_matches_from_db["opponent_name"] == opponent)
-                ]
-                if match_score_row.empty:
+                scores = score_map.get((player, opponent))
+                if not scores:
                     continue
 
-                left_score = match_score_row["left_score"].values[0]
-                right_score = match_score_row["right_score"].values[0]
+                left_score, right_score = scores
 
                 if pd.notna(left_score) and pd.notna(right_score) and pd.notna(match_id):
                     score_text = f"{int(left_score)} : {int(right_score)}"
@@ -1450,45 +1451,18 @@ with tab2:
         html_table = html_table.replace('<table border="1" class="dataframe">', '<table class="score-matrix">')
         placeholder_tab2.markdown(html_table, unsafe_allow_html=True)
 
+# 🔹 Build intermediate_scores from score_map (avoid re-looping df_matches_from_db)
+
+intermediate_scores = {
+    (player, opponent): (int(left_score), int(right_score))
+    for (player, opponent), (left_score, right_score) in score_map.items()
+    if pd.notna(left_score) and pd.notna(right_score)
+}
+
 # -----------------------
-# Tab 3: Match ID Matrix (Neon DB version, angepasst an deine Tabellenstruktur)
+# Tab 3: Match ID Matrix (optimiert)
 # -----------------------
 if needs_refresh:
-
-    df_links_from_db = run_query("""
-        SELECT
-            m.match_id,
-            p1.player_name AS player_name,
-            p2.player_name AS opponent_name
-        FROM matches m
-        JOIN players p1 ON m.player_id = p1.player_id
-        JOIN players p2 ON m.opponent_id = p2.player_id
-        JOIN player_groups pg1 ON pg1.player_id = p1.player_id
-        WHERE pg1.group_id = %s
-    """, (GROUP_ID,))
-
-    df_matches_from_db = run_query("""
-        SELECT
-            m.match_id,
-            m.left_score,
-            m.right_score,
-            p1.player_name AS player_name,
-            p2.player_name AS opponent_name
-        FROM matches m
-        JOIN players p1 ON m.player_id = p1.player_id
-        JOIN players p2 ON m.opponent_id = p2.player_id
-        JOIN player_groups pg1 ON pg1.player_id = p1.player_id
-        WHERE pg1.group_id = %s
-    """, (GROUP_ID,))
-
-    # 🔹 Load players list for selected group
-    df_players = run_query("""
-        SELECT p.player_name
-        FROM players p
-        JOIN player_groups pg ON pg.player_id = p.player_id
-        WHERE pg.group_id = %s
-        ORDER BY p.player_name;
-    """, (GROUP_ID,))
 
     # Robust extraction
     if "player_name" in df_players.columns:
@@ -1501,19 +1475,19 @@ if needs_refresh:
     # 🔹 Initialize clickable links matrix
     df_links_clickable = pd.DataFrame("", index=players, columns=players)
 
+    # ✅ Precompute lookup dictionary
+    link_map = {
+        (row.player_name, row.opponent_name): row.match_id
+        for row in df_links_from_db.itertuples(index=False)
+    }
+
+    # 🔁 Populate matrix using the dict (O(n²) but no DataFrame filter)
     for player in players:
         for opponent in players:
             if player == opponent:
                 continue
 
-            match_row = df_links_from_db[
-                (df_links_from_db["player_name"] == player)
-                & (df_links_from_db["opponent_name"] == opponent)
-            ]
-            if match_row.empty:
-                continue
-
-            match_id = match_row["match_id"].values[0]
+            match_id = link_map.get((player, opponent))
             if pd.notna(match_id):
                 df_links_clickable.at[player, opponent] = (
                     f'<a href="http://dailygammon.com/bg/game/{int(match_id)}/0/list#end" '
@@ -1526,28 +1500,8 @@ if needs_refresh:
     placeholder_tab3.markdown(html_table, unsafe_allow_html=True)
 
 else:
-    # Kein Re-Render nötig – Tab 3 bleibt wie vorher
     pass
 
-# 🔹 Build intermediate_scores from matches table
-intermediate_scores = {}
-for player in players:
-    for opponent in players:
-        if player == opponent:
-            continue
-
-        match_row = df_matches_from_db[
-            (df_matches_from_db["player_name"] == player)
-            & (df_matches_from_db["opponent_name"] == opponent)
-        ]
-        if match_row.empty:
-            continue
-
-        left_score = match_row["left_score"].values[0]
-        right_score = match_row["right_score"].values[0]
-
-        if pd.notna(left_score) and pd.notna(right_score):
-            intermediate_scores[(player, opponent)] = (int(left_score), int(right_score))
 # -----------------------
 # Build League Table / Stats for Tab 1 (Neon DB version)
 # -----------------------
