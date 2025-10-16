@@ -905,71 +905,54 @@ for match_id, (player_name, opponent_name, switched_flag) in match_id_to_db.item
 # -----------------------------------------------------
 # Step 2: Fill missing match IDs from DailyGammon (DB version)
 # -----------------------------------------------------
-# DB flag handling (replace Excel ws_control)
 
-skip_id_fetch = False
-if "MATCH_IDS_FILLED" in globals() and MATCH_IDS_FILLED:
-    skip_id_fetch = True
+# Fetch all matches for the group that have no match_id yet
+with conn.cursor() as cur:
+    cur.execute("""
+        SELECT m.id AS match_pk, p1.player_id, p1.player_name, p2.player_name
+        FROM matches m
+        JOIN players p1 ON m.player_id = p1.player_id
+        JOIN players p2 ON m.opponent_id = p2.player_id
+        WHERE m.group_id = %s AND m.match_id IS NULL;
+    """, (GROUP_ID,))
+    missing_matches = cur.fetchall()
 
-if not skip_id_fetch:
-    # Build player_name -> player_id mapping only for selected group
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT p.player_id, p.player_name
-            FROM players p
-            JOIN player_groups pg ON pg.player_id = p.player_id
-            WHERE pg.group_id = %s;
-        """, (GROUP_ID,))
-        player_map_rows = cur.fetchall()
+if not missing_matches:
+    print("ℹ️ All matches already have match_id, skipping fetch.")
+else:
+    for match_pk, player_id, player_name, opponent_name in missing_matches:
+        # Fetch all matches for this player from DailyGammon
+        player_matches = get_player_matches(session, player_id, season=season)
 
-    player_map = {name: pid for pid, name in player_map_rows}
-
-    for player in players:
-        pid = player_map.get(player)
-        if not pid:
-            continue
-
-        # Determine missing opponents (within the same group)
-        missing = [
-            opp for opp in players
-            if opp != player and
-               (player, opp) not in matches and
-               (player, opp) not in matches_by_hand
-        ]
-        if not missing:
-            continue
-
-        # Fetch matches from DailyGammon for that player
-        player_matches = get_player_matches(session, pid, season=season)
-
-        for opponent_name, opponent_id, match_id in player_matches:
-            key = (player, opponent_name)
-            if key in matches or key in matches_by_hand:
-                continue
+        # Find the match with the missing opponent
+        for opp_name, opp_id, match_id in player_matches:
+            if opp_name != opponent_name:
+                continue  # skip other opponents
 
             try:
                 mid_int = int(match_id)
             except (TypeError, ValueError):
                 continue
 
-            switched_flag = False
-            if mid_int in match_id_to_excel:
-                _, _, switched_flag = match_id_to_excel[mid_int]
-
+            # Save in your existing variables
+            key = (player_name, opponent_name)
             matches[key] = mid_int
-            match_id_to_excel[mid_int] = (player, opponent_name, switched_flag)
+            matches_by_hand[key] = (mid_int, False)  # default switched_flag=False
 
-            # Optional: write to Neon DB (if using SQL insert/update)
-            # db_write_match(player, opponent_name, mid_int, switched_flag)
+            # Optional: write directly to Neon DB
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE matches
+                    SET match_id = %s
+                    WHERE id = %s;
+                """, (mid_int, match_pk))
+                conn.commit()
 
-            print(f"🟢 Added missing match {player} vs {opponent_name} — match_id={mid_int}")
+            print(f"🟢 Added missing match {player_name} vs {opponent_name} — match_id={mid_int}")
+            break  # found the correct opponent, stop inner loop
 
-    print("✅ Match IDs updated (auto + manual detection)")
-else:
-    print("ℹ️ Skipping Step 2: All match IDs already present in DB")
+    print("✅ Match IDs updated for missing entries.")
 
-# Optional DB flag for later runs
-MATCH_IDS_FILLED = True
 
 # -----------------------------------------------------
 # Step 3 (DB): Collect finished matches directly from DB match_ids
