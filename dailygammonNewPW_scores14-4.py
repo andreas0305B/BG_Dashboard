@@ -397,24 +397,66 @@ session = login_session()
 #     - Match ID
 # -----------------------------------------------------
 
+#def get_player_matches(session: requests.Session, player_id, season):
+#    url = f"http://www.dailygammon.com/bg/user/{player_id}"
+#    r = session.get(url)
+#    r.raise_for_status()
+#    soup = BeautifulSoup(r.text, "html.parser")
+#    player_matches = []
+#    for row in soup.find_all("tr"):
+#        text = row.get_text(" ", strip=True)
+#        if season not in text:
+#            continue
+#        opponent_link = row.find("a", href=re.compile(r"/bg/user/\d+"))
+#        match_link = row.find("a", href=re.compile(r"/bg/game/\d+/0/"))
+#        if not opponent_link or not match_link:
+#            continue
+#        opponent_name = opponent_link.text.strip()
+#        opponent_id = re.search(r"/bg/user/(\d+)", opponent_link["href"]).group(1)
+#        match_id = re.search(r"/bg/game/(\d+)/0/", match_link["href"]).group(1)
+#        player_matches.append((opponent_name, opponent_id, match_id))
+#    return player_matches
+
+
 def get_player_matches(session: requests.Session, player_id, season):
+    """
+    Return list of tuples: (opponent_name_dg, match_id)
+    - Only parses <tr> rows that contain the target season and a /bg/game/.../0/ link.
+    """
     url = f"http://www.dailygammon.com/bg/user/{player_id}"
-    r = session.get(url)
-    r.raise_for_status()
+    try:
+        r = session.get(url, timeout=30)
+        r.raise_for_status()
+    except Exception as e:
+        print(f"⚠️ Error fetching {url}: {e}")
+        return []
+
     soup = BeautifulSoup(r.text, "html.parser")
     player_matches = []
-    for row in soup.find_all("tr"):
+
+    # Fetch all <tr> rows that contain a match link
+    rows = [tr for tr in soup.find_all("tr") if tr.find("a", href=re.compile(r"/bg/game/\d+/0/"))]
+    print(f"🌐 GET {url} -> Found {len(rows)} relevant <tr> rows; season='{season}'")
+
+    for i, row in enumerate(rows, start=1):
         text = row.get_text(" ", strip=True)
-        if season not in text:
+
+        # Only keep rows with the season string
+        if season and season.lower().strip() not in text.lower():
             continue
+
         opponent_link = row.find("a", href=re.compile(r"/bg/user/\d+"))
         match_link = row.find("a", href=re.compile(r"/bg/game/\d+/0/"))
         if not opponent_link or not match_link:
             continue
-        opponent_name = opponent_link.text.strip()
-        opponent_id = re.search(r"/bg/user/(\d+)", opponent_link["href"]).group(1)
+
+        opponent_name_dg = opponent_link.get_text(" ", strip=True)
         match_id = re.search(r"/bg/game/(\d+)/0/", match_link["href"]).group(1)
-        player_matches.append((opponent_name, opponent_id, match_id))
+
+        print(f"   + found DG match: opponent_name_dg='{opponent_name_dg}', match_id={match_id}")
+        player_matches.append((opponent_name_dg, match_id))
+
+    print(f"✅ Parsed {len(player_matches)} match(es) from DG for player_id={player_id}")
     return player_matches
 
 # -----------------------------------------------------
@@ -905,11 +947,14 @@ for match_id, (player_name, opponent_name, switched_flag) in match_id_to_db.item
 # -----------------------------------------------------
 # Step 2: Fill missing match IDs from DailyGammon (DB version)
 # -----------------------------------------------------
-
-# Fetch all matches for the group that have no match_id yet
+# Step 2: Fill missing match IDs from DailyGammon (DB version)
 with conn.cursor() as cur:
     cur.execute("""
-        SELECT m.id AS match_pk, p1.player_id, p1.player_name, p2.player_name
+        SELECT 
+            m.id AS match_pk,
+            p1.dg_player_id AS dg_player_id,
+            p1.player_name AS player_name,
+            p2.player_name AS opponent_name_db
         FROM matches m
         JOIN players p1 ON m.player_id = p1.player_id
         JOIN players p2 ON m.opponent_id = p2.player_id
@@ -920,26 +965,32 @@ with conn.cursor() as cur:
 if not missing_matches:
     print("ℹ️ All matches already have match_id, skipping fetch.")
 else:
-    for match_pk, player_id, player_name, opponent_name in missing_matches:
-        # Fetch all matches for this player from DailyGammon
-        player_matches = get_player_matches(session, player_id, season=season)
+    # Fetch all existing match_ids once to avoid duplicates
+    with conn.cursor() as cur:
+        cur.execute("SELECT match_id FROM matches WHERE match_id IS NOT NULL;")
+        existing_match_ids = set(r[0] for r in cur.fetchall())
 
-        # Find the match with the missing opponent
-        for opp_name, opp_id, match_id in player_matches:
-            if opp_name != opponent_name:
-                continue  # skip other opponents
+    for match_pk, dg_player_id, player_name, opponent_name_db in missing_matches:
+        player_matches = get_player_matches(session, dg_player_id, season=season)
+
+        for opponent_name_dg, match_id in player_matches:
+            # only fill null match_ids if the DG match_id is not yet used
+            if opponent_name_dg.strip().lower() != opponent_name_db.strip().lower():
+                continue
 
             try:
                 mid_int = int(match_id)
             except (TypeError, ValueError):
                 continue
 
-            # Save in your existing variables
-            key = (player_name, opponent_name)
-            matches[key] = mid_int
-            matches_by_hand[key] = (mid_int, False)  # default switched_flag=False
+            if mid_int in existing_match_ids:
+                continue
 
-            # Optional: write directly to Neon DB
+            # safe to update
+            key = (player_name, opponent_name_db)
+            matches[key] = mid_int
+            matches_by_hand[key] = (mid_int, False)
+
             with conn.cursor() as cur:
                 cur.execute("""
                     UPDATE matches
@@ -948,8 +999,9 @@ else:
                 """, (mid_int, match_pk))
                 conn.commit()
 
-            print(f"🟢 Added missing match {player_name} vs {opponent_name} — match_id={mid_int}")
-            break  # found the correct opponent, stop inner loop
+            existing_match_ids.add(mid_int)
+            print(f"🟢 Added missing match {player_name} vs {opponent_name_db} — match_id={mid_int}")
+            break  # found and saved — stop searching this pair
 
     print("✅ Match IDs updated for missing entries.")
 
