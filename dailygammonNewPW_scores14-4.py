@@ -836,69 +836,22 @@ if (df_links_clickable == "").any().any():
 else:
     needs_refresh = False
 
+#----------------------------------------------#
+# Stops the script if all matches have finished
+#----------------------------------------------#
 
-# -----------------------------------------------------
-# Step 2 old: Fill missing match IDs from DailyGammon (DB version)
-# -----------------------------------------------------
+with conn.cursor() as cur:
+    cur.execute("""
+        SELECT COUNT(*) 
+        FROM matches 
+        WHERE group_id = %s 
+        AND (left_score < 11 AND right_score < 11);
+    """, (GROUP_ID,))
+    open_matches = cur.fetchone()[0]
 
-#with conn.cursor() as cur:
-#    cur.execute("""
-#        SELECT 
-#            m.id AS match_pk,
-#            p1.dg_player_id AS dg_player_id,
-#            p1.player_name AS player_name,
-#            p2.player_name AS opponent_name_db
-#        FROM matches m
-#        JOIN players p1 ON m.player_id = p1.player_id
-#        JOIN players p2 ON m.opponent_id = p2.player_id
-#        WHERE m.group_id = %s AND m.match_id IS NULL;
-#    """, (GROUP_ID,))
-#    missing_matches = cur.fetchall()
-#
-#if not missing_matches:
-#    print("ℹ️ All matches already have match_id, skipping fetch.")
-#else:
-#    # Fetch all existing match_ids once to avoid duplicates
-#    with conn.cursor() as cur:
-#        cur.execute("SELECT match_id FROM matches WHERE match_id IS NOT NULL;")
-#        existing_match_ids = set(r[0] for r in cur.fetchall())
-#
-#    for match_pk, dg_player_id, player_name, opponent_name_db in missing_matches:
-#        player_matches = get_player_matches(session, dg_player_id, season=season)
-#
-#        for opponent_name_dg, match_id in player_matches:
-#            # only fill null match_ids if the DG match_id is not yet used
-#            if opponent_name_dg.strip().lower() != opponent_name_db.strip().lower():
-#                continue
-#
-#            try:
-#                mid_int = int(match_id)
-#            except (TypeError, ValueError):
-#                continue
-#
-#            if mid_int in existing_match_ids:
-#                continue
-#
-#            # safe to update
-#            key = (player_name, opponent_name_db)
-#            matches[key] = mid_int
-#            matches_by_hand[key] = (mid_int, False)
-#
-#            with conn.cursor() as cur:
-#                cur.execute("""
-#                    UPDATE matches
-#                    SET match_id = %s
-#
-#                     WHERE id = %s;
-#                """, (mid_int, match_pk))
-#                conn.commit()
-#
-#            existing_match_ids.add(mid_int)
-#            print(f"🟢 Added missing match {player_name} vs {opponent_name_db} — match_id={mid_int}")
-#            break  # found and saved — stop searching this pair
-#
-#    print("✅ Match IDs updated for missing entries.")
-
+if open_matches == 0:
+    st.success("🏁 All matches are finished – no further updates required.")
+    st.stop()  # oder print("League finished, skipping...")
 
 # -----------------------------------------------------
 # Step 2: Fill missing match IDs if needed
