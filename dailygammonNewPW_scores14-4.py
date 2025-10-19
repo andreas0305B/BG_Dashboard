@@ -397,27 +397,6 @@ session = login_session()
 #     - Match ID
 # -----------------------------------------------------
 
-#def get_player_matches(session: requests.Session, player_id, season):
-#    url = f"http://www.dailygammon.com/bg/user/{player_id}"
-#    r = session.get(url)
-#    r.raise_for_status()
-#    soup = BeautifulSoup(r.text, "html.parser")
-#    player_matches = []
-#    for row in soup.find_all("tr"):
-#        text = row.get_text(" ", strip=True)
-#        if season not in text:
-#            continue
-#        opponent_link = row.find("a", href=re.compile(r"/bg/user/\d+"))
-#        match_link = row.find("a", href=re.compile(r"/bg/game/\d+/0/"))
-#        if not opponent_link or not match_link:
-#            continue
-#        opponent_name = opponent_link.text.strip()
-#        opponent_id = re.search(r"/bg/user/(\d+)", opponent_link["href"]).group(1)
-#        match_id = re.search(r"/bg/game/(\d+)/0/", match_link["href"]).group(1)
-#        player_matches.append((opponent_name, opponent_id, match_id))
-#    return player_matches
-
-
 def get_player_matches(session: requests.Session, player_id, season):
     """
     Return list of tuples: (opponent_name_dg, match_id)
@@ -857,92 +836,6 @@ if (df_links_clickable == "").any().any():
 else:
     needs_refresh = False
 
-# -----------------------------------------------------
-# Build mapping directly from Neon DB
-# -----------------------------------------------------
-
-# Dictionary: match_id -> (player_name, opponent_name, switched_flag)
-match_id_to_db = {}
-
-# Fetch all matches from DB for the selected group
-with conn.cursor() as cur:
-    cur.execute("""
-        SELECT 
-            m.match_id,
-            p1.player_name AS player_name,
-            p2.player_name AS opponent_name,
-            m.switched_flag
-        FROM matches m
-        JOIN players p1 ON m.player_id = p1.player_id
-        JOIN players p2 ON m.opponent_id = p2.player_id
-        WHERE m.group_id = %s;
-    """, (GROUP_ID,))
-    match_rows = cur.fetchall()
-
-# Fill mapping
-for match_id, player_name, opponent_name, switched_flag in match_rows:
-    if match_id is not None:
-        match_id_to_db[int(match_id)] = (player_name, opponent_name, bool(switched_flag))
-
-# -----------------------------------------------------
-# Step 1: Check existing matches with HTML fetch (DB version)
-# -----------------------------------------------------
-
-# Build dictionaries for tracking
-matches = {}          # (player, opponent) -> match_id
-matches_by_hand = {}  # manual flipped matches
-finished_by_id = finished_by_id if "finished_by_id" in locals() else {}
-html_cache = html_cache if "html_cache" in locals() else {}
-
-# Collect all match_ids not yet cached or finished
-to_fetch_ids = [
-    mid for mid in match_id_to_db.keys()
-    if mid not in html_cache and mid not in finished_by_id
-]
-
-# Fetch HTML for all these matches
-for match_id in to_fetch_ids:
-    html_cache[match_id] = fetch_list_html(session, match_id)
-
-# Evaluate matches
-for match_id, (player_name, opponent_name, switched_flag) in match_id_to_db.items():
-
-    # Skip finished matches
-    if match_id in finished_by_id:
-        matches[(player_name, opponent_name)] = match_id
-        continue
-
-    html = html_cache.get(match_id)
-    if not html:
-        matches[(player_name, opponent_name)] = match_id
-        continue
-
-    score_info = extract_latest_score(html, [player_name, opponent_name])
-    if not score_info:
-        matches[(player_name, opponent_name)] = match_id
-        continue
-
-    left_name, right_name, status, _ = score_info
-    ln, rn = left_name.lower(), right_name.lower()
-    pn, on = player_name.lower(), opponent_name.lower()
-
-    if status == "finished":
-        finished_by_id[match_id] = True
-
-    # Normal order
-    if ln == pn and rn == on:
-        matches[(player_name, opponent_name)] = match_id
-        match_id_to_db[match_id] = (player_name, opponent_name, False)
-    # Swapped order
-    elif ln == on and rn == pn:
-        matches_by_hand[(player_name, opponent_name)] = (match_id, True)
-        match_id_to_db[match_id] = (player_name, opponent_name, True)
-        print(f"🟡 Manual match detected: {player_name} vs {opponent_name} (match_id={match_id})")
-    # Unclear order
-    else:
-        matches[(player_name, opponent_name)] = match_id
-        match_id_to_db[match_id] = (player_name, opponent_name, False)
-        print(f"⚠️ Unclear order for match_id={match_id}: DG shows '{left_name}' vs '{right_name}'")
 
 # -----------------------------------------------------
 # Step 2: Fill missing match IDs from DailyGammon (DB version)
@@ -1004,6 +897,94 @@ else:
             break  # found and saved — stop searching this pair
 
     print("✅ Match IDs updated for missing entries.")
+
+# -----------------------------------------------------
+# Build mapping directly from Neon DB
+# -----------------------------------------------------
+
+# Dictionary: match_id -> (player_name, opponent_name, switched_flag)
+match_id_to_db = {}
+
+# Fetch all matches from DB for the selected group
+with conn.cursor() as cur:
+    cur.execute("""
+        SELECT 
+            m.match_id,
+            p1.player_name AS player_name,
+            p2.player_name AS opponent_name,
+            m.switched_flag
+        FROM matches m
+        JOIN players p1 ON m.player_id = p1.player_id
+        JOIN players p2 ON m.opponent_id = p2.player_id
+        WHERE m.group_id = %s;
+    """, (GROUP_ID,))
+    match_rows = cur.fetchall()
+
+# Fill mapping
+for match_id, player_name, opponent_name, switched_flag in match_rows:
+    if match_id is not None:
+        match_id_to_db[int(match_id)] = (player_name, opponent_name, bool(switched_flag))
+
+
+# -----------------------------------------------------
+# Step 1: Check existing matches with HTML fetch (DB version)
+# -----------------------------------------------------
+
+# Build dictionaries for tracking
+matches = {}          # (player, opponent) -> match_id
+matches_by_hand = {}  # manual flipped matches
+finished_by_id = finished_by_id if "finished_by_id" in locals() else {}
+html_cache = html_cache if "html_cache" in locals() else {}
+
+# Collect all match_ids not yet cached or finished
+to_fetch_ids = [
+    mid for mid in match_id_to_db.keys()
+    if mid not in html_cache and mid not in finished_by_id
+]
+
+# Fetch HTML for all these matches
+for match_id in to_fetch_ids:
+    html_cache[match_id] = fetch_list_html(session, match_id)
+
+# Evaluate matches
+for match_id, (player_name, opponent_name, switched_flag) in match_id_to_db.items():
+
+    # Skip finished matches
+    if match_id in finished_by_id:
+        matches[(player_name, opponent_name)] = match_id
+        continue
+
+    html = html_cache.get(match_id)
+    if not html:
+        matches[(player_name, opponent_name)] = match_id
+        continue
+
+    score_info = extract_latest_score(html, [player_name, opponent_name])
+    if not score_info:
+        matches[(player_name, opponent_name)] = match_id
+        continue
+
+    left_name, right_name, status, _ = score_info
+    ln, rn = left_name.lower(), right_name.lower()
+    pn, on = player_name.lower(), opponent_name.lower()
+
+    if status == "finished":
+        finished_by_id[match_id] = True
+
+    # Normal order
+    if ln == pn and rn == on:
+        matches[(player_name, opponent_name)] = match_id
+        match_id_to_db[match_id] = (player_name, opponent_name, False)
+    # Swapped order
+    elif ln == on and rn == pn:
+        matches_by_hand[(player_name, opponent_name)] = (match_id, True)
+        match_id_to_db[match_id] = (player_name, opponent_name, True)
+        print(f"🟡 Manual match detected: {player_name} vs {opponent_name} (match_id={match_id})")
+    # Unclear order
+    else:
+        matches[(player_name, opponent_name)] = match_id
+        match_id_to_db[match_id] = (player_name, opponent_name, False)
+        print(f"⚠️ Unclear order for match_id={match_id}: DG shows '{left_name}' vs '{right_name}'")
 
 
 # -----------------------------------------------------
